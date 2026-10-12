@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hivescout"
-version = "0.1.0"
+version = "0.2.0"
 description = "User-side UX and resilience testing for AI-built software: declare non-happy states before coding, then probe the running app like a real user."
 readme = "README.md"
 license = { text = "Apache-2.0" }

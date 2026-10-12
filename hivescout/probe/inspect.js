@@ -22,5 +22,8 @@
     .filter(visible)
     .map((el) => (el.innerText || "").trim())
     .filter(Boolean);
-  return { text: text.slice(0, 20000), media, spinners, actions, alerts, title: document.title, url: location.href };
+  const controls = [...document.querySelectorAll('button,[role="button"],input[type="submit"]')].filter(visible);
+  const disabled = controls.filter((el) => el.disabled || el.getAttribute("aria-disabled") === "true").length;
+  const busy = [...document.querySelectorAll('[aria-busy="true"]')].length;
+  return { text: text.slice(0, 20000), media, spinners, actions, alerts, disabled, busy, title: document.title, url: location.href };
 }

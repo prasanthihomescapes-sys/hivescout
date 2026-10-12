@@ -36,8 +36,9 @@ def lint(root: Path, target: str | None = None, stack: str | None = None) -> tup
             findings += structure.check_react(app, target)
         elif st == "expo":
             findings += structure.check_expo(app, target)
-        if st in ("nextjs", "react", "expo"):
-            for f in walk(app, js.JS_SUFFIXES):
+        if st in ("nextjs", "react", "expo", "deno", "static"):
+            suffixes = js.JS_SUFFIXES + ((".html",) if st == "static" else ())
+            for f in walk(app, suffixes):
                 if f.name.endswith(".d.ts") or f in seen_files:
                     continue
                 seen_files.add(f)
@@ -58,6 +59,13 @@ def lint(root: Path, target: str | None = None, stack: str | None = None) -> tup
                 fd.file = f"{prefix}/{fd.file}"
             elif fd.file is None:
                 fd.file = (prefix + "/") if prefix != "." else "./"
+    if not apps:
+        findings.append(Finding(
+            rule="SC000", severity="high", channel="lint", target=target, file="./",
+            title="Nothing was scanned: no supported app found, so a clean result here means nothing",
+            evidence=f"no Next.js, React, Expo, Python API, Deno function or plain HTML/JS app under {root.name}",
+            fix="Point the target at the app folder, set `stack` in targets.json, or open an issue for this stack.",
+            extra={"why": "An unscannable target otherwise shows as a permanently green gate."}))
     out = []
     for fd in findings:
         fd.extra.pop("_rooted", None)

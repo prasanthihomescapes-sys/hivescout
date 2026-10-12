@@ -110,3 +110,44 @@ def test_nextjs_segment_error_coverage(tmp_path):
 def test_py_specific_exception_pass_is_low(tmp_path):
     fs = _py(tmp_path, "import json\ntry:\n    json.loads('x')\nexcept json.JSONDecodeError:\n    pass\n")
     assert [(f.rule, f.severity) for f in fs] == [("PY001", "low")]
+
+
+def test_suppression_above_multiline_comment(tmp_path):
+    # the reason may span several comment lines, and contain an em dash
+    code = ("// hivescout-ignore: JS002 — not swallowed: the throw below is unconditional;\n"
+            "// this only guards the best-effort read of the body.\n"
+            "const body = await res.json().catch(() => null);\nconsole.log(body);\n")
+    assert _js(tmp_path, code) == []
+
+
+def test_suppression_does_not_leak_past_code(tmp_path):
+    code = "// hivescout-ignore: JS002\nconst a = 1;\nx().catch(() => {});\n"
+    assert rules(_js(tmp_path, code)) == ["JS002"]
+
+
+def test_body_read_catch_followed_by_throw_is_clean(tmp_path):
+    code = ('if (!res.ok) {\n  const body = await res.text().catch(() => "");\n'
+            "  throw new Error(`dispatch failed ${res.status}: ${body}`);\n}\n")
+    assert _js(tmp_path, code) == []
+
+
+def test_body_read_catch_without_throw_is_low(tmp_path):
+    fs = _js(tmp_path, "const data = await res.json().catch(() => null);\nrender(data);\n")
+    assert [(f.rule, f.severity) for f in fs] == [("JS002", "low")]
+
+
+def test_deno_and_static_detected_and_nothing_scanned_is_high(tmp_path):
+    fn = tmp_path / "supabase" / "functions" / "hook"
+    fn.mkdir(parents=True)
+    (fn / "index.ts").write_text("try { a() } catch {}\n")
+    (tmp_path / "console").mkdir()
+    (tmp_path / "console" / "index.html").write_text("<script src=app.js></script>")
+    (tmp_path / "console" / "app.js").write_text("fetch('/x').then(r => r.json()).catch(() => [])\n")
+    fs, apps = lint(tmp_path)
+    assert sorted(s for s, _ in apps) == ["deno", "static"]
+    assert sorted(f.file for f in fs if f.rule == "JS002") == ["console/app.js", "supabase/functions/hook/index.ts"]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert [(f.rule, f.severity) for f in lint(empty)[0]] == [("SC000", "high")]
+
+

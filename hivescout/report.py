@@ -41,13 +41,13 @@ def render(findings: list[Finding], meta: dict, out_path: Path) -> str:
                   "A fault marked *not exercised* means the page made no matching browser request, usually because "
                   "it fetches on the server. That route was **not** tested for that fault.", ""]
         faults = meta.get("faults", [])
-        lines.append("| route | api calls | " + " | ".join(faults) + " |")
+        lines.append("| route / journey | requests | " + " | ".join(faults) + " |")
         lines.append("|---|---:|" + "---|" * len(faults))
         for route, c in cov.items():
             cells = []
             for fn in faults:
                 v = c["faults"].get(fn, "-")
-                cells.append("yes" if v == "exercised" else ("**no**" if v.startswith("not") else v[:40]))
+                cells.append("yes" if v.startswith("exercised") else ("**no**" if v.startswith("not") else v[:40]))
             lines.append(f"| {route} | {c['api_calls']} | " + " | ".join(cells) + " |")
         lines.append("")
 
@@ -76,7 +76,7 @@ def render(findings: list[Finding], meta: dict, out_path: Path) -> str:
         lines.append("")
     if not findings:
         cells = [v for c in (cov or {}).values() for v in c["faults"].values()]
-        missed = sum(1 for v in cells if v != "exercised")
+        missed = sum(1 for v in cells if not v.startswith("exercised"))
         if cells and missed == len(cells):
             lines.append("**Not a pass:** no fault reached any route. These pages made no matching browser requests on "
                          "load, so nothing was tested. Probe signed-in routes (`--storage-state`), widen "

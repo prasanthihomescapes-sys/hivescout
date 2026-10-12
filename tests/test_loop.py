@@ -63,3 +63,21 @@ def test_cli_lint_writes_report_and_fails_on_high(tmp_path):
     assert (tmp_path / "findings.json").exists()
     assert "NX001" in (tmp_path / "report.md").read_text(encoding="utf-8")
     assert main(["lint", str(ROOT / "examples" / "broken-next"), "--out", str(tmp_path), "--fail-on", "never"]) == 0
+
+
+def test_export_journey_spec():
+    from hivescout.export import ts_value
+    f = Finding(rule="WEB010", severity="high", title="What the user typed is wiped", channel="journey",
+                target="shop", route="journey:save", fault="http500", extra={"journey": "save"})
+    defs = {"save": {"start": "/orders/new",
+                     "steps": [{"fill": {"label": "Order name", "value": "Test"}},
+                               {"fill": {"label": "Password", "value": "${env:PW}"}}],
+                     "act": [{"click": {"role": "button", "name": "Save"}}]}}
+    text = spec([f], journeys=defs)
+    assert "journey save under http500" in text
+    assert 'await page.getByLabel("Order name").first().fill("Test");' in text
+    assert "armed = true;" in text and "next-action" in text
+    assert 'await expect(page.getByLabel("Order name").first()).not.toHaveValue("");' in text
+    assert 'getByLabel("Password").first()).not.toHaveValue' not in text    # passwords may be cleared
+    assert 'await expect(page.getByRole("button", { name: "Save" }).first()).toBeEnabled();' in text
+    assert ts_value("${env:PW|x}") == '`${process.env.PW ?? "x"}`'

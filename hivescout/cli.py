@@ -7,6 +7,7 @@
     hivescout report FINDINGS.json
     hivescout export-test FINDINGS.json --out e2e/hivescout.spec.ts
     hivescout kb-sync FINDINGS.json --kb path/to/kb.py
+    hivescout auth --target NAME [--manual|--scripted|--check]
     hivescout targets
 """
 from __future__ import annotations
@@ -120,21 +121,58 @@ def cmd_contract(args) -> int:
     return _exit(findings, args.fail_on)
 
 
+def _load_journeys(args, contracts_dir: Path | None):
+    import yaml
+
+    from .probe.journey import Journey, load_from_contracts
+    js = []
+    if contracts_dir and contracts_dir.exists():
+        js += load_from_contracts(contract_mod.load_contracts(contracts_dir))
+    for f in args.journeys or []:
+        doc = yaml.safe_load(Path(f).read_text(encoding="utf-8")) or {}
+        items = doc.get("journeys", doc) if isinstance(doc, dict) else doc
+        js += [Journey.from_dict(d) for d in items]
+    if args.journey:
+        wanted = set(args.journey)
+        missing = wanted - {j.id for j in js}
+        if missing:
+            raise SystemExit(f"unknown journey(s): {', '.join(sorted(missing))}; known: {', '.join(j.id for j in js) or 'none'}")
+        js = [j for j in js if j.id in wanted]
+    return js
+
+
 def cmd_probe(args) -> int:
     from .probe.web import ProbeConfig, run
+    storage, login_path, contracts_dir = args.storage_state, None, None
     if args.target:
         t = pick(_targets(args), args.target)
         name, base, routes, pattern = t.name, args.base_url or t.base_url, args.route or t.routes, args.api_pattern or t.api_pattern
+        contracts_dir = t.contracts
         if not routes and t.contracts and t.contracts.exists():
             routes = [fl["route"] for _, doc in contract_mod.load_contracts(t.contracts)
                       if doc.get("surface") in ("web", "mobile") for fl in doc.get("flows", [])
                       if fl.get("route") and "[" not in fl["route"]]
+        if t.auth is not None:
+            login_path = t.auth.login_path
+            if not storage and t.auth.state and t.auth.state.exists():
+                storage = str(t.auth.state)
+            elif not storage:
+                print(f"note: {name} has signed-in areas but no saved session; run `hivescout auth --target {name}`. "
+                      "Signed-in routes will be reported as not tested.", file=sys.stderr)
     else:
         name, base, routes, pattern = args.name or "app", args.base_url, args.route, args.api_pattern or "**/api/**"
+        login_path = args.login_path
+    try:
+        journeys = _load_journeys(args, contracts_dir)
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
+    if args.no_routes:
+        routes = []
     if not base:
         raise SystemExit("no base URL: pass --base-url or set base_url in targets.json (start the app first)")
-    if not routes:
-        raise SystemExit("no routes: pass --route, list routes in targets.json, or write a web contract")
+    if not routes and not journeys:
+        raise SystemExit("nothing to probe: pass --route or --journeys, list routes in targets.json, or write a web contract")
+    routes = routes or []
     bad = [r for r in routes if not r.startswith("/")]
     if bad:
         hint = (" Git Bash rewrote it into a Windows path; rerun with MSYS_NO_PATHCONV=1 or use //route."
@@ -142,15 +180,45 @@ def cmd_probe(args) -> int:
         raise SystemExit(f"routes must be URL paths starting with '/': {bad}.{hint}")
     routes = ["/" + r.lstrip("/") for r in routes]  # '//login' (an MSYS escape) -> '/login'
     out = _out_dir(args, name, "web")
-    cfg = ProbeConfig(base_url=base, routes=routes, out_dir=out, target=name, api_pattern=pattern,
-                      faults=args.faults.split(",") if args.faults else None,
+    from .probe.faults import FAULTS
+    faults = args.faults.split(",") if args.faults else None
+    unknown = [f for f in faults or [] if f not in FAULTS or f == "baseline"]
+    if unknown:
+        raise SystemExit(f"unknown fault(s) {unknown}; choose from {', '.join(k for k in FAULTS if k != 'baseline')}")
+    cfg = ProbeConfig(base_url=base, routes=routes, out_dir=out, target=name, api_pattern=pattern, faults=faults,
                       personas=args.personas.split(",") if args.personas else None,
-                      headless=not args.headed, storage_state=args.storage_state)
+                      headless=not args.headed, storage_state=storage, login_path=login_path,
+                      journeys=journeys, allow_mutations=args.allow_mutations, cors_relay=args.cors_relay)
     findings, meta = run(cfg)
+    meta["journey_defs"] = {j.id: {"start": j.start, "steps": j.steps, "act": j.act} for j in journeys}
     report = _publish(findings, {"target": name, "channels": ["web"], **meta}, out, args)
-    not_ex = sum(1 for c in meta["coverage"].values() for v in c["faults"].values() if v != "exercised")
-    print(f"{name}: {_summary(findings)} routes={len(routes)} faults-not-exercised={not_ex} -> {report}")
+    not_ex = sum(1 for c in meta["coverage"].values() for v in c["faults"].values() if not v.startswith("exercised"))
+    print(f"{name}: {_summary(findings)} routes={len(routes)} journeys={len(journeys)} "
+          f"signed-in={'yes' if storage else 'no'} faults-not-exercised={not_ex} -> {report}")
     return _exit(findings, args.fail_on)
+
+
+def cmd_auth(args) -> int:
+    from . import auth as auth_mod
+    t = pick(_targets(args), args.target)
+    if t.auth is None:
+        raise SystemExit(f'{t.name} has no "auth" block in targets.json; add e.g. '
+                         '{"auth": {"login_path": "/login", "check_path": "/dashboard"}}')
+    base = args.base_url or t.base_url
+    if not base:
+        raise SystemExit("no base URL: pass --base-url or set base_url in targets.json (start the app first)")
+    state = t.auth.state
+    if args.check:
+        ok, landed = auth_mod.check(base, t.auth, state)
+        print(f"{t.name}: {'signed in' if ok else 'NOT signed in'} ({landed})"
+              + (f"; {auth_mod.describe_state(state)}" if state.exists() else ""))
+        return 0 if ok else 1
+    manual = True if args.manual else (False if args.scripted else None)
+    out = auth_mod.capture(base, t.auth, state, manual=manual, timeout_s=args.timeout)
+    ok, landed = auth_mod.check(base, t.auth, out)
+    print(f"saved {out} ({auth_mod.describe_state(out)}). Keep it out of git: it holds live session cookies.")
+    print(f"check: {'signed in' if ok else 'NOT signed in'} at {landed}")
+    return 0 if ok else 1
 
 
 def cmd_report(args) -> int:
@@ -164,7 +232,8 @@ def cmd_report(args) -> int:
 def cmd_export(args) -> int:
     from .export import write
     meta, findings = load(Path(args.findings))
-    n = write(findings, Path(args.out), args.api_pattern or meta.get("api_pattern", "**/api/**"))
+    n = write(findings, Path(args.out), args.api_pattern or meta.get("api_pattern", "**/api/**"),
+              meta.get("journey_defs") or {})
     print(f"{n} test(s) -> {args.out}")
     return 0
 
@@ -222,10 +291,28 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--api-pattern")
     s.add_argument("--faults", help="comma list: http500,http401,http404,timeout,slow,malformed,empty,offline")
     s.add_argument("--personas", help="comma list: desktop,mobile")
-    s.add_argument("--storage-state", help="Playwright storage state JSON for signed-in routes")
+    s.add_argument("--storage-state", help="Playwright storage state JSON for signed-in routes (default: the target's saved session)")
+    s.add_argument("--login-path", help="where an expired session lands (with --base-url; targets set auth.login_path)")
+    s.add_argument("--journeys", action="append", help="YAML file of journeys (also read from the target's contracts)")
+    s.add_argument("--journey", action="append", help="only run this journey id (repeatable)")
+    s.add_argument("--no-routes", action="store_true", help="run journeys only")
+    s.add_argument("--allow-mutations", action="store_true",
+                   help="also run journeys marked mutates:true without a fault (creates real data)")
+    s.add_argument("--cors-relay", action="store_true",
+                   help="relay API reads through the probe with an allow-origin header (local build vs prod API)")
     s.add_argument("--headed", action="store_true")
     common(s)
     s.set_defaults(fn=cmd_probe)
+
+    s = sub.add_parser("auth", help="capture or check a signed-in session for a target")
+    s.add_argument("--target", required=True)
+    s.add_argument("--base-url")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--manual", action="store_true", help="open a browser and let a person sign in (default without auth.steps)")
+    g.add_argument("--scripted", action="store_true", help="run auth.steps headless with ${env:...} values")
+    s.add_argument("--check", action="store_true", help="only check the saved session still works")
+    s.add_argument("--timeout", type=int, default=300, help="seconds to wait for sign-in")
+    s.set_defaults(fn=cmd_auth)
 
     s = sub.add_parser("report", help="re-render report.md from findings.json")
     s.add_argument("findings")

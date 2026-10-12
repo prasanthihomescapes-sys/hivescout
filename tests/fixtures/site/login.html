@@ -1,0 +1,16 @@
+<!doctype html><html><head><title>Sign in</title></head><body>
+<h1>Sign in</h1>
+<form id="f">
+  <label for="email">Email</label><input id="email" type="email">
+  <label for="pw">Password</label><input id="pw" type="password">
+  <button type="submit">Sign in</button>
+</form>
+<p id="msg" role="alert"></p>
+<script>
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email.value, password: pw.value }) });
+  if (r.ok) location.href = "/app"; else document.getElementById("msg").textContent = "Sign-in failed. Check your details and try again.";
+});
+</script></body></html>

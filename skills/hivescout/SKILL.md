@@ -37,6 +37,13 @@ If a preview or dev server is running:
 hivescout probe --base-url <url> --route <route> [--faults http500,timeout,offline,empty,malformed]
 ```
 
+For any flow where the user *does* something (sign in, save, pay, submit), add a journey to its contract flow
+(`steps` = setup, `act` = the click that sends; see the README). Probe it with `--journey <id>`. The checks are:
+input kept on failure, feedback on click, no double submit, and the user told plus able to retry. Behind a login,
+use `hivescout auth --target <name>` (a person signs in) **before** probing, or the report will say the session
+is missing. Never put real credentials in a contract: scripted auth reads a test account from `${env:...}`.
+Faulted runs never send writes; only use `--allow-mutations` against data you may change.
+
 Then read `report.md` and look at the screenshots of any finding. Fix high findings, or state plainly which ones
 remain and why. Do not suppress a rule just to pass the gate. A `hivescout-ignore` comment needs a reason next
 to it.

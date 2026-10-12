@@ -6,6 +6,7 @@ and then guards against regressions. One test per (route, fault) pair.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def _route_code(fault_name: str, api_pattern: str) -> tuple[str, str, int]:
     return ("", "", 2500)
 
 
-def spec(findings: list[Finding], api_pattern: str = "**/api/**") -> str:
+def spec(findings: list[Finding], api_pattern: str = "**/api/**", journeys: dict | None = None) -> str:
     pairs: dict[tuple[str, str], list[Finding]] = {}
     for f in findings:
         if f.channel == "web" and f.route and f.fault and f.fault in FAULTS and f.fault != "baseline":
@@ -73,12 +74,141 @@ def spec(findings: list[Finding], api_pattern: str = "**/api/**") -> str:
                        ".or(page.getByRole(\"link\", { name: " + RECOVERY_RX + " })).first()).toBeVisible();")
         out.append("  });")
         out.append("")
+    out += _journey_tests(findings, api_pattern, journeys or {})
     out.append("});")
     return "\n".join(out) + "\n"
 
 
-def write(findings: list[Finding], out: Path, api_pattern: str = "**/api/**") -> int:
-    text = spec(findings, api_pattern)
+# ----------------------------------------------------------------------------- journeys
+
+_ENV = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)(?:\|([^}]*))?\}")
+
+
+def ts_value(v) -> str:
+    """A journey value as TypeScript; ${env:NAME|default} becomes process.env.NAME ?? "default"."""
+    s = str(v)
+    if not _ENV.search(s):
+        return json.dumps(s)
+    parts, last = [], 0
+    for m in _ENV.finditer(s):
+        lit = s[last:m.start()].replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+        parts.append(lit + "${process.env." + m.group(1) + " ?? " + json.dumps(m.group(2) or "") + "}")
+        last = m.end()
+    parts.append(s[last:].replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${"))
+    return "`" + "".join(parts) + "`"
+
+
+def ts_locator(loc: dict) -> str:
+    if "role" in loc:
+        opts = []
+        if "name" in loc:
+            opts.append(f"name: {json.dumps(loc['name'])}")
+        if loc.get("exact") is not None and "name" in loc:
+            opts.append(f"exact: {'true' if loc['exact'] else 'false'}")
+        lc = f"page.getByRole({json.dumps(loc['role'])}" + (", { " + ", ".join(opts) + " }" if opts else "") + ")"
+    elif "label" in loc:
+        lc = f"page.getByLabel({json.dumps(loc['label'])})"
+    elif "placeholder" in loc:
+        lc = f"page.getByPlaceholder({json.dumps(loc['placeholder'])})"
+    elif "text" in loc:
+        lc = f"page.getByText({json.dumps(loc['text'])})"
+    elif "testid" in loc:
+        lc = f"page.getByTestId({json.dumps(loc['testid'])})"
+    else:
+        lc = f"page.locator({json.dumps(loc['selector'])})"
+    return lc + (f".nth({int(loc['nth'])})" if "nth" in loc else ".first()")
+
+
+def ts_step(step: dict) -> str:
+    (action, arg), = step.items()
+    if action == "goto":
+        return f"await page.goto({json.dumps(str(arg))});"
+    if action == "wait":
+        return f"await page.waitForTimeout({int(arg)});"
+    if action == "expect_text":
+        return f"await expect(page.getByText({json.dumps(str(arg))}).first()).toBeVisible();"
+    lc = ts_locator(arg)
+    return {
+        "expect_visible": f"await expect({lc}).toBeVisible();",
+        "fill": f"await {lc}.fill({ts_value(arg.get('value', ''))});",
+        "select": f"await {lc}.selectOption({ts_value(arg.get('value', ''))});",
+        "check": f"await {lc}.check();",
+        "uncheck": f"await {lc}.uncheck();",
+        "press": f"await {lc}.press({json.dumps(arg.get('key', 'Enter'))});",
+        "click": f"await {lc}.click();",
+    }[action]
+
+
+def _journey_fault(fault_name: str) -> tuple[str, int]:
+    f = FAULTS[fault_name]
+    if f.kind in ("status", "body"):
+        return (f"route.fulfill({{ status: {f.status}, contentType: {json.dumps(f.content_type)}, "
+                f"body: {json.dumps(f.body)} }})", 2500)
+    if f.kind == "abort":
+        return 'route.abort("internetdisconnected")', 2500
+    if f.kind == "hang":
+        return "new Promise(() => {})", 9000
+    if f.kind == "delay":
+        return (f'new Promise((r) => setTimeout(r, {f.delay_ms})).then(() => route.fulfill({{ status: 503, '
+                'contentType: "application/json", body: "{\\"error\\":\\"unavailable\\"}" }))', 9000)
+    return "route.continue()", 2500
+
+
+def _journey_tests(findings: list[Finding], api_pattern: str, journeys: dict) -> list[str]:
+    pairs: dict[tuple[str, str], list[Finding]] = {}
+    for f in findings:
+        jid = f.extra.get("journey")
+        if f.channel == "journey" and jid in journeys and f.fault in FAULTS and f.fault != "baseline":
+            pairs.setdefault((jid, f.fault), []).append(f)
+    from .probe.web import glob_to_regex
+    api_rx = json.dumps(glob_to_regex(api_pattern).pattern)
+    out: list[str] = []
+    for (jid, fault), fs in sorted(pairs.items()):
+        j = journeys[jid]
+        rules = ", ".join(sorted({f.rule for f in fs}))
+        failure = FAULTS[fault].failure
+        action, wait = _journey_fault(fault)
+        name = f"journey {jid} under {fault}: user is told, keeps their input, can retry ({rules})"
+        out.append(f"  test({json.dumps(name)}, async ({{ page, context }}) => {{")
+        for f in fs:
+            out.append(f"    // {f.rule}: {f.title}")
+        out += [
+            "    let armed = false;",
+            f"    const api = new RegExp({api_rx});",
+            '    await context.route("**/*", (route) => {',
+            "      const req = route.request();",
+            '      const nav = req.resourceType() === "document" && req.method() === "GET";',
+            '      const hit = armed && !nav && (api.test(req.url()) || "next-action" in req.headers() ||',
+            '        !["GET", "HEAD", "OPTIONS"].includes(req.method()));',
+            f"      return hit ? {action} : route.continue();",
+            "    });",
+            f"    await page.goto({json.dumps(j.get('start') or '/')});",
+        ]
+        out += ["    " + ts_step(s) for s in j.get("steps") or []]
+        out.append("    armed = true;")
+        if FAULTS[fault].kind == "abort":
+            out.append("    await context.setOffline(true);")
+        out += ["    " + ts_step(s) for s in j.get("act") or []]
+        out.append(f"    await page.waitForTimeout({wait});")
+        out.append('    const body = page.locator("body");')
+        out.append(f"    await expect(body).not.toHaveText({STACK_RX});")
+        if failure:
+            out.append(f"    await expect(body).toHaveText({ERROR_RX});")
+            for s in j.get("steps") or []:
+                if "fill" in s and "password" not in json.dumps(s["fill"]).lower():
+                    out.append(f"    await expect({ts_locator(s['fill'])}).not.toHaveValue(\"\");  // input survives the failure")
+            click = next((s["click"] for s in reversed(j.get("act") or []) if "click" in s), None)
+            if click:
+                out.append(f"    await expect({ts_locator(click)}).toBeEnabled();  // the user can try again")
+        if any(f.rule == "WEB009" for f in fs):
+            out.append("    // WEB009: also assert the submit is disabled while pending, so a second click cannot resend")
+        out.append("  });")
+        out.append("")
+    return out
+
+
+def write(findings: list[Finding], out: Path, api_pattern: str = "**/api/**", journeys: dict | None = None) -> int:
+    text = spec(findings, api_pattern, journeys)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     return text.count("  test(")

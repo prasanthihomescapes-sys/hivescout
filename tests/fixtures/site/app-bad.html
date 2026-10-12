@@ -1,0 +1,18 @@
+<!doctype html><html><head><title>Orders</title></head><body>
+<h1>New order</h1>
+<form id="f">
+  <label for="name">Order name</label><input id="name">
+  <button id="save" type="submit">Save order</button>
+</form>
+<ul id="list"></ul>
+<script>
+const input = document.getElementById("name");
+document.getElementById("f").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = input.value; input.value = "";   // clears before knowing it worked
+  fetch("/api/orders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) })
+    .then((r) => r.json())
+    .then((o) => document.getElementById("list").insertAdjacentHTML("beforeend", "<li>" + o.name + "</li>"))
+    .catch(() => {});
+});
+</script></body></html>

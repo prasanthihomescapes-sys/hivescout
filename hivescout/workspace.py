@@ -31,6 +31,7 @@ class Target:
     contracts: Path | None = None
     routes: list[str] = field(default_factory=list)
     stack: str | None = None  # override auto-detection
+    auth: object | None = None  # hivescout.auth.AuthConfig when the target has signed-in areas
 
 
 def workspace_dir(explicit: str | None) -> Path | None:
@@ -51,9 +52,19 @@ def load_targets(ws: Path) -> list[Target]:
             name=t["name"], path=p if p.is_absolute() else ws / p, base_url=t.get("base_url"),
             api_pattern=t.get("api_pattern", "**/api/**"),
             contracts=(Path(c) if Path(c).is_absolute() else ws / c) if c else ws / "contracts" / t["name"],
-            routes=t.get("routes", []), stack=t.get("stack"),
+            routes=t.get("routes", []), stack=t.get("stack"), auth=_auth(t, ws),
         ))
     return out
+
+
+def _auth(t: dict, ws: Path):
+    a = t.get("auth")
+    if not a:
+        return None
+    from .auth import AuthConfig
+    state = Path(a["state"]) if a.get("state") else Path("auth") / f"{t['name']}.json"
+    return AuthConfig(login_path=a.get("login_path", "/login"), check_path=a.get("check_path"),
+                      state=state if state.is_absolute() else ws / state, steps=list(a.get("steps") or []))
 
 
 def pick(targets: list[Target], name: str) -> Target:
@@ -86,7 +97,7 @@ def _pkg_deps(pkg: Path) -> set[str]:
 def detect_apps(root: Path) -> list[tuple[str, Path]]:
     """Return [(stack, app_root)] for every app found under root (monorepo aware).
 
-    stack is one of: nextjs, expo, react, python.
+    stack is one of: nextjs, expo, react, python, deno (edge functions), static (plain HTML/JS).
     """
     apps: list[tuple[str, Path]] = []
     for pkg in walk(root, ("package.json",)):
@@ -109,6 +120,17 @@ def detect_apps(root: Path) -> list[tuple[str, Path]]:
             if any(fw in text for fw in ("fastapi", "flask", "django", "starlette")):
                 apps.append(("python", Path(dirpath)))
                 dirnames[:] = []  # nested python packages belong to this app
+    # Deno / Supabase edge functions: each function folder is an API surface
+    js_apps = [q for st, q in apps if st in ("nextjs", "expo", "react")]
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+        d = Path(dirpath)
+        if d.name == "functions" and d.parent.name == "supabase" or "deno.json" in filenames or "deno.jsonc" in filenames:
+            apps.append(("deno", d))
+            dirnames[:] = []
+        # plain HTML/JS front ends (no framework): an index.html next to script files
+        elif "index.html" in filenames and any(f.endswith((".js", ".mjs")) for f in filenames)                 and not any(d == q or q in d.parents for q in js_apps):
+            apps.append(("static", d))
     # drop apps nested inside another app of the same stack
     apps.sort(key=lambda a: len(a[1].parts))
     kept: list[tuple[str, Path]] = []

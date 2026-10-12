@@ -1,0 +1,27 @@
+<!doctype html><html><head><title>Orders</title></head><body>
+<h1>New order</h1>
+<form id="f">
+  <label for="name">Order name</label><input id="name">
+  <button id="save" type="submit">Save order</button>
+</form>
+<div id="status" aria-live="polite"></div>
+<ul id="list"></ul>
+<script>
+const save = document.getElementById("save"), status = document.getElementById("status"), input = document.getElementById("name");
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  save.disabled = true; status.innerHTML = '<span class="spinner">Saving order</span>';
+  try {
+    if (!navigator.onLine) throw new Error("offline");
+    const r = await fetch("/api/orders", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: input.value }), signal: AbortSignal.timeout(4000) });
+    if (r.status === 401) { status.innerHTML = '<p role="alert">Your session expired. <a href="/login">Sign in again</a></p>'; return; }
+    if (!r.ok) throw new Error("http " + r.status);
+    const o = await r.json();
+    document.getElementById("list").insertAdjacentHTML("beforeend", "<li>" + o.name + "</li>");
+    status.textContent = "Order saved"; input.value = "";
+  } catch (err) {
+    status.innerHTML = '<p role="alert">We could not save your order. Your details are kept; please try again.</p>';
+  } finally { save.disabled = false; }
+});
+</script></body></html>

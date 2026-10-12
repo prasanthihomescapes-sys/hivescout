@@ -23,7 +23,7 @@ REQUIRED = {
     "api": ["error", "timeout", "unauthorized", "invalid_input"],
     "convo": ["error", "unclear_input", "timeout"],
 }
-SURFACE_OF_STACK = {"nextjs": "web", "react": "web", "expo": "mobile", "python": "api"}
+SURFACE_OF_STACK = {"nextjs": "web", "react": "web", "static": "web", "expo": "mobile", "python": "api", "deno": "api"}
 TODO = "TODO"
 
 
@@ -50,6 +50,14 @@ def discover_routes(stack: str, app: Path) -> list[str]:
     elif stack == "react":
         for p in walk(app, (".tsx", ".jsx", ".ts", ".js")):
             routes.update(m.group(1) for m in _RR_ROUTE.finditer(p.read_text(encoding="utf-8", errors="replace")))
+    elif stack == "static":
+        for p in walk(app, (".html",)):
+            rel = p.relative_to(app).as_posix()
+            routes.add("/" + (rel[:-len("index.html")] if rel.endswith("index.html") else rel))
+    elif stack == "deno":
+        for p in walk(app, (".ts", ".js")):
+            if p.stem == "index" and p.parent != app:
+                routes.add(f"ANY /{p.parent.name}")
     elif stack == "python":
         for p in walk(app, (".py",)):
             for m in _PY_ROUTE.finditer(p.read_text(encoding="utf-8", errors="replace")):

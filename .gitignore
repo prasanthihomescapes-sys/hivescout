@@ -8,3 +8,5 @@ dist/
 .ruff_cache/
 hivescout-out/
 *.tmp
+auth/
+*.storage-state.json

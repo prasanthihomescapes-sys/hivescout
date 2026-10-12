@@ -71,6 +71,7 @@ _CATCH_BLOCK = re.compile(r"\bcatch\s*(?:\([^)]*\))?\s*\{")
 _CATCH_CB = re.compile(r"\.catch\s*\(")
 _RAW_ERR = re.compile(r"\{\s*(?:\w*err\w*|e)\??\.(message|stack)\s*\}|\{\s*String\(\s*\w*err\w*\s*\)\s*\}|"
                       r"\{\s*JSON\.stringify\(\s*\w*err\w*", re.I)
+_BODY_READ = re.compile(r"\.(json|text|blob|arrayBuffer|formData)\(\s*\)\s*$")
 _DATA_HOOK = re.compile(r"\b(useQuery|useSWR|useInfiniteQuery|useSuspenseQuery)\s*\(")
 
 
@@ -157,6 +158,16 @@ def check_file(path: Path, root: Path, target: str) -> list[Finding]:
             body = "return " + body
         kind = _body_kind(body)
         snippet = src[m.start():min(end, m.start() + 160)]
+        if kind == "empty" and _BODY_READ.search(src[max(0, m.start() - 40):m.start()]):
+            # `await res.text().catch(() => "")`: only the body *detail* is optional. If the code then throws
+            # anyway, the failure still surfaces; flag nothing. Otherwise it's a minor, low finding.
+            if re.search(r"\bthrow\b|Promise\.reject|\breject\(", src[end:end + 400]):
+                continue
+            f = make(JS002, target=target, file=path, root=root, line=line_of(src, m.start()), evidence=snippet)
+            f.severity, f.title = "low", "Response body read failure ignored: check the error still reaches the user"
+            if not suppressed(lines, f.line, "JS002"):
+                out.append(f)
+            continue
         if kind == "empty":
             add(JS002, m.start(), snippet, end)
         elif kind == "mock":

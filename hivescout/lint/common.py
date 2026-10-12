@@ -24,9 +24,18 @@ def line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+COMMENT_LINE = re.compile(r"^\s*(//|#|/\*|\*|<!--)")
+
+
 def suppressed(lines: list[str], line: int, rule_id: str) -> bool:
-    """A `hivescout-ignore` (or `hivescout-ignore: RULE1, RULE2`) comment on the line or the line above."""
-    for ln in (line, line - 1):
+    """A `hivescout-ignore` (or `hivescout-ignore: RULE1, RULE2`) marker on the flagged line, or anywhere in the
+    unbroken comment block directly above it, so the reason can span several lines."""
+    candidates = [line]
+    ln = line - 1
+    while 1 <= ln <= len(lines) and COMMENT_LINE.match(lines[ln - 1]):
+        candidates.append(ln)
+        ln -= 1
+    for ln in candidates:
         if 1 <= ln <= len(lines):
             m = SUPPRESS.search(lines[ln - 1])
             if m and (not m.group("rules") or rule_id in m.group("rules")):
