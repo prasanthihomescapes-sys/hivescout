@@ -1,0 +1,21 @@
+<!doctype html><html><head><title>good</title></head><body>
+<h1>Orders</h1><div id="out" aria-live="polite"><div class="spinner">Loading orders</div></div>
+<script>
+async function load() {
+  const out = document.getElementById("out");
+  out.innerHTML = '<div class="spinner">Loading orders</div>';
+  try {
+    if (!navigator.onLine) throw new Error("offline");
+    const r = await fetch("/api/items", { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error("http " + r.status);
+    const items = await r.json();
+    out.innerHTML = items.length
+      ? "<ul>" + items.map((i) => "<li>" + i.name + "</li>").join("") + "</ul>"
+      : "<p>No orders yet. Create your first order to see it here.</p>";
+  } catch (e) {
+    out.innerHTML = '<p role="alert">We could not load your orders. Check your connection and try again.</p>' +
+      '<button onclick="load()">Try again</button>';
+  }
+}
+load();
+</script></body></html>

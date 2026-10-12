@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>mock</title></head><body>
+<h1>Orders</h1><div id="out"></div>
+<script>
+const MOCK = [{ name: "Order 1001" }, { name: "Order 1002" }];
+fetch("/api/items", { signal: AbortSignal.timeout(2000) }).then((r) => r.json()).catch(() => MOCK).then((items) => {
+  document.getElementById("out").innerHTML = "<ul>" + items.map((i) => "<li>" + i.name + "</li>").join("") + "</ul>";
+});
+</script></body></html>

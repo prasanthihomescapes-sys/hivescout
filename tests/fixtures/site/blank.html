@@ -1,0 +1,7 @@
+<!doctype html><html><head><title>blank</title></head><body><div id="root"></div>
+<script>
+fetch("/api/items", { signal: AbortSignal.timeout(2000) }).then((r) => r.json()).then((items) => {
+  if (!Array.isArray(items) || !items.length) throw new Error("no items");
+  document.getElementById("root").innerHTML = "<h1>Orders</h1><ul>" + items.map((i) => "<li>" + i.name + "</li>").join("") + "</ul>";
+});
+</script></body></html>

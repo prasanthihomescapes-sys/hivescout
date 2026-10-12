@@ -1,0 +1,7 @@
+<!doctype html><html><head><title>stack</title></head><body>
+<h1>Orders</h1><pre id="out">Loading</pre>
+<script>
+fetch("/api/items", { signal: AbortSignal.timeout(2000) }).then((r) => r.json()).then((items) => {
+  document.getElementById("out").textContent = items.map((i) => i.name).join("\n");
+}).catch((e) => { document.getElementById("out").textContent = String(e) + "\n" + (e.stack || ""); });
+</script></body></html>

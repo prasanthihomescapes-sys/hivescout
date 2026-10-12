@@ -1,0 +1,7 @@
+<!doctype html><html><head><title>spinner</title></head><body>
+<h1>Orders</h1><div id="out"><div class="spinner">Loading orders</div></div>
+<script>
+fetch("/api/items").then((r) => r.json()).then((items) => {
+  document.getElementById("out").innerHTML = "<ul>" + items.map((i) => "<li>" + i.name + "</li>").join("") + "</ul>";
+}).catch(() => {});
+</script></body></html>

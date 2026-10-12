@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "hivescout UX contract",
+  "description": "Declares, before code is written, what a user sees and can do when a flow is not on the happy path.",
+  "type": "object",
+  "required": ["version", "surface", "flows"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "target": {"type": "string"},
+    "surface": {"enum": ["web", "mobile", "api", "convo"]},
+    "flows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/flow"}
+    }
+  },
+  "$defs": {
+    "recovery": {
+      "enum": ["retry", "back", "home", "reload", "contact", "sign_in", "edit_input", "wait", "none"]
+    },
+    "state": {
+      "type": "object",
+      "anyOf": [{"required": ["shows", "recovery"]}, {"required": ["not_applicable"]}],
+      "additionalProperties": false,
+      "properties": {
+        "shows": {"type": "string", "minLength": 3, "description": "What the user sees, in plain words."},
+        "recovery": {"$ref": "#/$defs/recovery"},
+        "copy": {"type": "string", "description": "Exact user-facing text, if decided."},
+        "max_ms": {"type": "integer", "minimum": 0, "description": "For loading/slow: how long before a timeout state."},
+        "not_applicable": {"type": "string", "description": "Why this state cannot happen for this flow."}
+      }
+    },
+    "flow": {
+      "type": "object",
+      "required": ["id", "states"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+        "route": {"type": "string", "description": "Web/mobile route, API path or conversation trigger."},
+        "goal": {"type": "string", "description": "What the user is trying to get done."},
+        "data": {"type": "array", "items": {"type": "string"}, "description": "Calls this flow depends on, e.g. 'GET /api/stats'."},
+        "fallback_policy": {
+          "enum": ["error_only", "cached_with_notice", "partial_with_notice", "queue_and_retry"],
+          "description": "What the flow may show when its data fails. Silent substitution is never allowed."
+        },
+        "states": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "loading": {"$ref": "#/$defs/state"},
+            "empty": {"$ref": "#/$defs/state"},
+            "error": {"$ref": "#/$defs/state"},
+            "offline": {"$ref": "#/$defs/state"},
+            "slow": {"$ref": "#/$defs/state"},
+            "partial": {"$ref": "#/$defs/state"},
+            "unauthorized": {"$ref": "#/$defs/state"},
+            "not_found": {"$ref": "#/$defs/state"},
+            "invalid_input": {"$ref": "#/$defs/state"},
+            "unclear_input": {"$ref": "#/$defs/state"},
+            "timeout": {"$ref": "#/$defs/state"}
+          }
+        }
+      }
+    }
+  }
+}

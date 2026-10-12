@@ -1,0 +1,6 @@
+{
+  "name": "broken-next",
+  "private": true,
+  "description": "Deliberately missing every non-happy state. HiveScout must flag each gap.",
+  "dependencies": { "next": "15.0.0", "react": "19.0.0", "react-dom": "19.0.0" }
+}

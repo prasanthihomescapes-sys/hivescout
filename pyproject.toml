@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hivescout"
+version = "0.1.0"
+description = "User-side UX and resilience testing for AI-built software: declare non-happy states before coding, then probe the running app like a real user."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6", "jsonschema>=4"]
+
+[project.optional-dependencies]
+probe = ["playwright>=1.45", "httpx>=0.27"]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+hivescout = "hivescout.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hivescout*"]
+
+[tool.setuptools.package-data]
+hivescout = ["contract/*.json", "probe/*.js"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["examples"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
