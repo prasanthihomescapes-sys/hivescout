@@ -69,7 +69,7 @@ def check_nextjs(root: Path, target: str) -> list[Finding]:
                                 evidence="routes: " + ", ".join(routes[:25]) + (" ..." if len(routes) > 25 else "")))
                 out[-1].file = app.relative_to(root).as_posix() + "/"
             elif stem == "error" or len(missing) <= 10:
-                for d, r in zip(missing, routes):
+                for d, r in zip(missing, routes, strict=True):
                     f = make(rule, target=target, file=None, root=root, line=None, evidence=f"route {r}")
                     f.file, f.route = d.relative_to(root).as_posix() + "/", r
                     out.append(f)

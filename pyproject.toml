@@ -29,6 +29,11 @@ line-length = 120
 target-version = "py310"
 extend-exclude = ["examples"]
 
+[tool.ruff.lint]
+# explicit, so a newer ruff in CI does not silently add rule families
+select = ["E", "F", "W", "B"]
+ignore = ["E501", "B008"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
