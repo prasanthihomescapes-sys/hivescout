@@ -8,7 +8,7 @@ import yaml
 
 from ..findings import Finding
 from ..workspace import detect_apps, walk
-from . import js, python_api, structure
+from . import js, python_api, structure, tests_guard
 
 
 def _config(root: Path) -> dict:
@@ -59,6 +59,9 @@ def lint(root: Path, target: str | None = None, stack: str | None = None) -> tup
                 fd.file = f"{prefix}/{fd.file}"
             elif fd.file is None:
                 fd.file = (prefix + "/") if prefix != "." else "./"
+    # TS001 reads test files, which every rule set above skips; walk the whole root once, paths relative to it
+    for f in walk(root, js.JS_SUFFIXES + (".py", ".sql")):
+        findings += tests_guard.check_file(f, root, target)
     if not apps:
         findings.append(Finding(
             rule="SC000", severity="high", channel="lint", target=target, file="./",

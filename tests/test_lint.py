@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from hivescout.lint import lint
 from hivescout.lint import js, python_api
 
@@ -151,3 +153,84 @@ def test_deno_and_static_detected_and_nothing_scanned_is_high(tmp_path):
     assert [(f.rule, f.severity) for f in lint(empty)[0]] == [("SC000", "high")]
 
 
+
+
+# ---- TS001: guard tested only for refusal -------------------------------------------------------------------
+
+GUARD_FX = Path(__file__).resolve().parent / "fixtures" / "guard"
+GUARD_CASES = [  # (fixture, name the file gets in the scanned tree, one must-succeed control to append)
+    ("refusal_only.test.ts", "src/policy.test.ts",
+     '  it("operator can write", async () => {\n    const res = await fetch("/api/decisions", { method: "POST" });\n'
+     '    expect(res.status).toBe(201);\n  });\n'),
+    ("guard_refusal_only.py", "tests/test_policy.py",
+     '\n\ndef test_admin_can_publish(client):\n    assert client.post("/publish", headers={"role": "admin"}).status_code == 200\n'),
+    ("refusal_only_rls.sql", "supabase/tests/rls_test.sql",
+     "\nselect lives_ok($$ insert into public.approvals (client_id, decision) values ('c1', 'approved') $$,"
+     " 'approver can approve');\n"),
+]
+
+
+def _guard_tree(tmp_path, fixture, name, extra=""):
+    f = tmp_path / name
+    f.parent.mkdir(parents=True, exist_ok=True)
+    text = (GUARD_FX / fixture).read_text(encoding="utf-8")
+    if extra.startswith("  it("):  # a JS control goes inside the describe it is meant to control
+        end = text.rstrip().rfind("});")
+        text = text[:end] + extra + text[end:]
+    else:
+        text += extra
+    f.write_text(text, encoding="utf-8")
+    return [x for x in lint(tmp_path)[0] if x.rule == "TS001"]
+
+
+@pytest.mark.parametrize("fixture,name,control", GUARD_CASES)
+def test_ts001_refusal_only_guard_test_is_flagged(tmp_path, fixture, name, control):
+    fs = _guard_tree(tmp_path, fixture, name)
+    assert [(f.file, f.severity) for f in fs] == [(name, "medium")]
+    assert "blocks everyone" in fs[0].title and "must-succeed control" in fs[0].fix
+    assert "every one expects a refusal" in fs[0].evidence
+
+
+@pytest.mark.parametrize("fixture,name,control", GUARD_CASES)
+def test_ts001_one_success_control_makes_it_clean(tmp_path, fixture, name, control):
+    assert _guard_tree(tmp_path, fixture, name, control) == []
+
+
+def test_ts001_non_guard_test_never_flagged(tmp_path):
+    # throws/rejects alone are validation, not a guard: no caller, no policy, no status code
+    assert _guard_tree(tmp_path, "not_guard.test.ts", "src/caption.test.ts") == []
+    (tmp_path / "test_math.py").write_text("import pytest\n\ndef test_div():\n    with pytest.raises(ZeroDivisionError):\n"
+                                           "        1 / 0\n", encoding="utf-8")
+    assert [f for f in lint(tmp_path)[0] if f.rule == "TS001"] == []
+
+
+def test_ts001_supabase_error_null_is_a_success_control(tmp_path):
+    extra = ('\ndescribe("decision_log RLS: owner", () => {\n  it("owner can insert", async () => {\n'
+             '    const { error } = await db.insert({});\n    expect(error).toBeNull();\n  });\n});\n')
+    fs = _guard_tree(tmp_path, "refusal_only.test.ts", "a.test.ts", extra)
+    assert [f.line for f in fs] == [4]  # the refusal-only describe is still flagged; the controlled one is not
+    # one describe holding both refusal and success is clean
+    code = (GUARD_FX / "refusal_only.test.ts").read_text(encoding="utf-8").rstrip().rstrip("});") + \
+        '  it("owner can insert", async () => {\n    const { error } = await db.insert({});\n' \
+        '    expect(error).toBeNull();\n  });\n});\n'
+    (tmp_path / "a.test.ts").write_text(code, encoding="utf-8")
+    assert [f for f in lint(tmp_path)[0] if f.rule == "TS001"] == []
+
+
+def test_ts001_suppression(tmp_path):
+    ts = "// hivescout-ignore: TS001 — success paths live in policy.db.test.ts\n"
+    src = (GUARD_FX / "refusal_only.test.ts").read_text(encoding="utf-8").replace('describe("', ts + 'describe("', 1)
+    (tmp_path / "a.test.ts").write_text(src, encoding="utf-8")
+    sql = "-- hivescout-ignore: TS001 (lives_ok controls in rls_allowed.sql)\n" + \
+        (GUARD_FX / "refusal_only_rls.sql").read_text(encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "rls.sql").write_text(sql, encoding="utf-8")
+    assert [f for f in lint(tmp_path)[0] if f.rule == "TS001"] == []
+
+
+def test_ts001_runs_on_test_files_other_rules_skip(tmp_path):
+    (tmp_path / "package.json").write_text('{"dependencies": {"react": "18"}}')
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.tsx").write_text("export default function App(){return null}")
+    fs = _guard_tree(tmp_path, "refusal_only.test.ts", "src/__tests__/rls.test.ts")
+    assert [f.file for f in fs] == ["src/__tests__/rls.test.ts"]

@@ -88,6 +88,7 @@ recovery for every TODO. It writes a `.draft.yml` for you to review, and never o
 | PY003 | medium | Hardcoded number returned on failure |
 | PY004 | high/medium | Stack trace or raw exception text sent to the client |
 | PY005 | medium | Bare `except:` |
+| TS001 | medium | A guard (RLS policy, permission check, auth gate, rate limit) is only tested for refusal, so a passing test cannot tell "blocks the wrong people" from "blocks everyone" or "never ran" (runs on test files, which other rules skip) |
 | WEB001 | high | Blank screen under a fault |
 | WEB002 | high | Spinner never resolves on a hung request |
 | WEB003 | high | Stack trace or raw error on screen |
